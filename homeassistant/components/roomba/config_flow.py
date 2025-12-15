@@ -13,12 +13,14 @@ import voluptuous as vol
 
 from homeassistant.config_entries import (
     ConfigEntry,
+    ConfigEntryState,
     ConfigFlow,
     ConfigFlowResult,
     OptionsFlow,
 )
 from homeassistant.const import CONF_DELAY, CONF_HOST, CONF_NAME, CONF_PASSWORD
 from homeassistant.core import HomeAssistant, callback
+from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers.service_info.dhcp import DhcpServiceInfo
 from homeassistant.helpers.service_info.zeroconf import ZeroconfServiceInfo
 
@@ -107,9 +109,30 @@ class RoombaConfigFlow(ConfigFlow, domain=DOMAIN):
         self, discovery_info: DhcpServiceInfo
     ) -> ConfigFlowResult:
         """Handle dhcp discovery."""
-        return await self._async_step_discovery(
-            discovery_info.ip, discovery_info.hostname
-        )
+        registry = dr.async_get(self.hass)
+        if not (
+            device := registry.async_get_device(
+                connections={(dr.CONNECTION_NETWORK_MAC, discovery_info.macaddress)}
+            )
+        ):
+            return await self._async_step_discovery(
+                discovery_info.ip, discovery_info.hostname
+            )
+
+        for entry_id in device.config_entries:
+            if (
+                not (entry := self.hass.config_entries.async_get_entry(entry_id))
+                or entry.domain != DOMAIN
+                or entry.state is ConfigEntryState.LOADED
+            ):
+                continue
+            if self.hass.config_entries.async_update_entry(
+                entry, data=entry.data | {CONF_HOST: discovery_info.ip}
+            ):
+                self.hass.async_create_task(
+                    self.hass.config_entries.async_reload(entry_id)
+                )
+        return self.async_abort(reason="already_configured")
 
     async def _async_step_discovery(
         self, ip_address: str, hostname: str

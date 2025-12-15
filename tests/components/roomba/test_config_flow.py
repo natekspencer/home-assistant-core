@@ -22,6 +22,7 @@ from homeassistant.config_entries import (
 from homeassistant.const import CONF_DELAY, CONF_HOST, CONF_PASSWORD
 from homeassistant.core import HomeAssistant
 from homeassistant.data_entry_flow import FlowResultType
+from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers.service_info.dhcp import DhcpServiceInfo
 from homeassistant.helpers.service_info.zeroconf import ZeroconfServiceInfo
 
@@ -1096,6 +1097,37 @@ async def test_dhcp_discovery_when_user_flow_in_progress(hass: HomeAssistant) ->
 
     current_flows = hass.config_entries.flow.async_progress()
     assert len(current_flows) == 2
+
+
+async def test_dhcp_discovery_with_matching_mac(hass: HomeAssistant) -> None:
+    """Test discovery from dhcp for a device with matching mac updates config entry host."""
+    device_registry = dr.async_get(hass)
+
+    entry = MockConfigEntry(domain=DOMAIN, data=VALID_CONFIG, unique_id="BLID")
+    entry.add_to_hass(hass)
+
+    assert entry.data[CONF_HOST] == MOCK_IP
+
+    device_registry.async_get_or_create(
+        config_entry_id=entry.entry_id,
+        connections={(dr.CONNECTION_NETWORK_MAC, "aabbccddeeff")},
+    )
+
+    result = await hass.config_entries.flow.async_init(
+        DOMAIN,
+        context={"source": "dhcp"},
+        data=DhcpServiceInfo(
+            ip="4.4.4.4",
+            macaddress="aabbccddeeff",
+            hostname="unknown",
+        ),
+    )
+
+    assert result["type"] == "abort"
+    assert result["reason"] == "already_configured"
+
+    updated_entry = hass.config_entries.async_get_entry(entry.entry_id)
+    assert updated_entry.data[CONF_HOST] == "4.4.4.4"
 
 
 async def test_options_flow(
